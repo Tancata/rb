@@ -1,0 +1,131 @@
+################################################################################
+#
+# RevBayes Example: Bayesian inference of phylogeny using a Jukes-Cantor
+#            substitution model on a single gene.
+#
+# authors: Sebastian Hoehna, Michael Landis, and Tracy A. Heath
+#
+################################################################################
+
+# Try to implement a branch-heterogeneous model, at least for sequence composition
+
+# Fix the tree, get the root comps
+### Read in sequence data for both genes
+#data = readDiscreteCharacterData("data/primates_and_galeopterus_cytb.nex")
+data <- readDiscreteCharacterData("data/3182_recoded.nex")
+tree <- readTrees("data/3182.phy.contree_rerooted")
+
+# Get some useful variables from the data. We need these later on.
+n_species <- data.ntaxa()
+n_branches <- 2 * n_species - 2
+taxa <- data.taxa()
+
+
+mvi = 1
+mni = 1
+
+
+######################
+# Substitution Model #
+######################
+
+# Across-site rate variation
+#
+alpha_prior_mean <- ln(5.0)
+alpha_prior_sd <- 0.587405
+alpha ~ dnLognormal( alpha_prior_mean, alpha_prior_sd )
+gamma_rates := fnDiscretizeGamma( alpha, alpha, 4 )
+moves[mvi++] = mvScale(alpha, weight=2.0)
+
+# Root frequency
+# We need a specific set of root frequencies
+pi_prior <- v(1,1) #would one parameter from a beta or gamma distribution make more sense?
+pi_root ~ dnDirichlet(pi_prior)
+moves[mvi++] = mvBetaSimplex(pi_root, weight=2)
+moves[mvi++] = mvDirichletSimplex(pi_root, weight=1)
+
+root_freqs := pi_root
+#
+##############
+# Tree model #
+##############
+#
+#out_group = clade("Galeopterus_variegatus")
+# Prior distribution on the tree topology    
+#topology ~ dnUniformTopology(taxa, outgroup=out_group)
+#moves[mvi++] = mvNNI(topology, weight=5.0)
+#moves[mvi++] = mvSPR(topology, weight=1.0)
+
+# Branch length prior
+for (i in 1:n_branches) {
+    bl[i] ~ dnExponential(10.0)
+    moves[mvi++] = mvScale(bl[i])
+    #setup different comps on the branches
+    pi_prior[i] <- v(1,1) 
+    pi[i] ~ dnDirichlet(pi_prior[i])
+
+    moves[mvi++] = mvBetaSimplex(pi[i], weight=2)
+    moves[mvi++] = mvDirichletSimplex(pi[i], weight=1)
+    Q[i] := fnF81(pi[i]) #could these pi[i]s be correlated with each other, e.g. evolve down the tree from the root? (a la molecular clock) or could we use a DPP to have the number of different comp vectors? (A DPP with n_branches components)?
+}
+
+topology <- tree[1]
+
+TL := sum(bl)
+TL    
+psi := treeAssembly(topology, bl)
+psi
+
+##################
+# Invariant sites#
+##################
+
+data.getNumInvariantSites()
+pinvar ~ dnBeta(1,1)
+moves[mvi++] = mvSlide(pinvar)
+
+
+###################
+# PhyloCTMC Model #
+###################
+
+# the sequence evolution model
+#seq ~ dnPhyloCTMC(tree=psi, Q=Q, type="DNA")
+seq ~ dnPhyloCTMC(tree=psi, Q=Q, rootFrequencies=pi_root, siteRates=gamma_rates, pInv=pinvar, type="Binary")
+
+# attach the data
+seq.clamp(data)
+
+############
+# Analysis #
+############
+
+mymodel = model(psi)
+
+# add monitors
+monitors[mni++] = mnScreen(TL, printgen=1000)
+monitors[mni++] = mnScreen(root_freqs, printgen=1000)
+monitors[mni++] = mnFile(psi, filename="output/F81_NS.trees", printgen=10)
+monitors[mni++] = mnModel(filename="output/F81_NS.log", printgen=10)
+
+# run the analysis
+mymcmc = mcmc(mymodel, moves, monitors, nruns=2)
+mymcmc.burnin(10000,200)
+mymcmc.run(30000)
+
+
+
+###################
+# Post processing #
+###################
+
+# Now, we will analyze the tree output.
+# Let us start by reading in the tree trace
+#treetrace = readTreeTrace("output/primates-cytb_GTR_NS.trees", treetype="non-clock")
+# and then get the MAP tree
+#map_tree = mapTree(treetrace,"output/primates_cytb_GTR_MAP_NS.tree")
+
+
+# you may want to quit RevBayes now
+q()
+
